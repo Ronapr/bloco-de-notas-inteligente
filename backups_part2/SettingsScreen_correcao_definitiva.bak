@@ -1,0 +1,463 @@
+package com.securenotes.app.ui.screens.settings
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material3.Button
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.securenotes.app.R
+import com.securenotes.app.domain.settings.SettingsRepository
+import com.securenotes.app.security.BiometricAuthenticator
+import com.securenotes.app.security.BiometricAvailability
+import com.securenotes.app.security.SecurityManager
+import com.securenotes.app.ui.screens.security.PinTextField
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsRoute(
+    securityManager: SecurityManager,
+    biometricAuthenticator: BiometricAuthenticator,
+    settingsRepository: SettingsRepository,
+    onNavigateBack: () -> Unit
+) {
+    val viewModel: SettingsViewModel = viewModel {
+        SettingsViewModel(securityManager, biometricAuthenticator, settingsRepository)
+    }
+    val uiState by viewModel.uiState.collectAsState()
+
+    LaunchedEffect(uiState.requestBiometricAuth) {
+        if (uiState.requestBiometricAuth) {
+            val success = biometricAuthenticator.authenticate()
+            viewModel.onBiometricAuthResult(success)
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = stringResource(R.string.configuracoes),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                },
+                navigationIcon = {
+                    IconButton(
+                        onClick = onNavigateBack,
+                        modifier = Modifier.testTag("settings_back")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.voltar)
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            uiState.message?.let { message ->
+                ElevatedCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("settings_message")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(message),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        TextButton(onClick = viewModel::dismissMessage) {
+                            Text(stringResource(R.string.cancelar))
+                        }
+                    }
+                }
+            }
+
+            SectionHeader(text = stringResource(R.string.seguranca))
+
+            ChangePinCard(uiState = uiState, viewModel = viewModel)
+
+            BiometricCard(uiState = uiState, viewModel = viewModel)
+
+            SectionHeader(text = stringResource(R.string.notificacoes))
+
+            ReminderSoundCard(uiState = uiState, viewModel = viewModel)
+
+            SectionHeader(text = stringResource(R.string.sobre_o_aplicativo))
+
+            AboutCard()
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 8.dp, start = 4.dp)
+    )
+}
+
+@Composable
+private fun ChangePinCard(
+    uiState: SettingsUiState,
+    viewModel: SettingsViewModel
+) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = stringResource(R.string.alterar_pin),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = stringResource(R.string.alterar_pin_descricao),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            if (!uiState.showChangePinForm) {
+                OutlinedButton(
+                    onClick = viewModel::toggleChangePinForm,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("change_pin_button")
+                ) {
+                    Text(stringResource(R.string.alterar_pin))
+                }
+            } else {
+                PinTextField(
+                    value = uiState.currentPin,
+                    onValueChange = viewModel::onCurrentPinChange,
+                    label = stringResource(R.string.pin_atual),
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "pin_current",
+                    isError = uiState.error != null
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                PinTextField(
+                    value = uiState.newPin,
+                    onValueChange = viewModel::onNewPinChange,
+                    label = stringResource(R.string.novo_pin),
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "pin_new",
+                    isError = uiState.error != null
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                PinTextField(
+                    value = uiState.confirmNewPin,
+                    onValueChange = viewModel::onConfirmNewPinChange,
+                    label = stringResource(R.string.confirmar_novo_pin),
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "pin_confirm_new",
+                    isError = uiState.error != null
+                )
+                uiState.error?.let { error ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(error),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("settings_error")
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row {
+                    Button(
+                        onClick = viewModel::savePinChange,
+                        enabled = !uiState.busy,
+                        modifier = Modifier.testTag("save_pin_change")
+                    ) {
+                        Text(stringResource(R.string.salvar))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    OutlinedButton(
+                        onClick = viewModel::toggleChangePinForm,
+                        modifier = Modifier.testTag("cancel_pin_change")
+                    ) {
+                        Text(stringResource(R.string.cancelar))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BiometricCard(
+    uiState: SettingsUiState,
+    viewModel: SettingsViewModel
+) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Face,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.biometria),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = stringResource(
+                            if (uiState.biometricEnabled) R.string.status_ativada
+                            else R.string.status_desativada
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (uiState.biometricEnabled) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.testTag("biometric_status")
+                    )
+                }
+                Switch(
+                    checked = uiState.biometricEnabled,
+                    onCheckedChange = viewModel::onBiometricToggleRequested,
+                    modifier = Modifier.testTag("biometric_switch")
+                )
+            }
+            if (!uiState.biometricEnabled) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = viewModel::onConfigureBiometric,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("configure_biometric")
+                ) {
+                    Text(stringResource(R.string.configurar_biometria))
+                }
+                if (uiState.biometricAvailability == BiometricAvailability.UNAVAILABLE) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.biometria_indisponivel),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            if (uiState.showBiometricOffConfirm) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = stringResource(R.string.confirmar_biometria_off),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                PinTextField(
+                    value = uiState.confirmPinToDisable,
+                    onValueChange = viewModel::onConfirmPinToDisableChange,
+                    label = stringResource(R.string.pin_atual),
+                    modifier = Modifier.fillMaxWidth(),
+                    testTag = "pin_biometric_off",
+                    isError = uiState.error != null
+                )
+                uiState.error?.let { error ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(error),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row {
+                    Button(
+                        onClick = viewModel::confirmDisableBiometric,
+                        modifier = Modifier.testTag("confirm_biometric_off")
+                    ) {
+                        Text(stringResource(R.string.desbloquear))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    TextButton(
+                        onClick = viewModel::cancelDisableBiometric
+                    ) {
+                        Text(stringResource(R.string.cancelar))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReminderSoundCard(
+    uiState: SettingsUiState,
+    viewModel: SettingsViewModel
+) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Notifications,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.som_lembretes),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = stringResource(
+                        if (uiState.reminderSoundEnabled) R.string.som_ligado
+                        else R.string.som_desligado
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (uiState.reminderSoundEnabled) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.testTag("reminder_sound_status")
+                )
+            }
+            Switch(
+                checked = uiState.reminderSoundEnabled,
+                onCheckedChange = viewModel::onReminderSoundToggle,
+                modifier = Modifier.testTag("reminder_sound_switch")
+            )
+        }
+    }
+}
+
+@Composable
+private fun AboutCard() {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = stringResource(R.string.app_name),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.versao, com.securenotes.app.BuildConfig.VERSION_NAME),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.sobre_descricao),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = stringResource(R.string.desenvolvido_por),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = stringResource(R.string.autor),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}

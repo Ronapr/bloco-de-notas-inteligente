@@ -1,0 +1,65 @@
+package com.securenotes.app.di
+
+import android.content.Context
+import com.securenotes.app.MainActivity
+import com.securenotes.app.data.repository.FolderRepositoryImpl
+import com.securenotes.app.data.repository.NoteRepositoryImpl
+import com.securenotes.app.data.repository.ReminderRepositoryImpl
+import com.securenotes.app.data.settings.SettingsRepositoryImpl
+import com.securenotes.app.data.settings.settingsDataStore
+import com.securenotes.app.database.AppDatabase
+import com.securenotes.app.domain.repository.FolderRepository
+import com.securenotes.app.domain.repository.NoteRepository
+import com.securenotes.app.domain.repository.ReminderRepository
+import com.securenotes.app.domain.settings.SettingsRepository
+import com.securenotes.app.reminder.AndroidReminderScheduler
+import com.securenotes.app.reminder.ReminderScheduler
+import com.securenotes.app.security.BiometricAuthenticator
+import com.securenotes.app.security.BiometricAuthenticatorImpl
+import com.securenotes.app.security.CryptoProvider
+import com.securenotes.app.security.CryptoProviderImpl
+import com.securenotes.app.security.SecurityManager
+import com.securenotes.app.spellcheck.SpellCheckManager
+
+class AppContainer(context: Context) {
+
+    private val appContext = context.applicationContext
+
+    val database: AppDatabase by lazy { AppDatabase.getInstance(appContext) }
+
+    val settingsRepository: SettingsRepository by lazy {
+        SettingsRepositoryImpl(appContext.settingsDataStore)
+    }
+
+    val noteRepository: NoteRepository by lazy {
+        NoteRepositoryImpl(database.noteDao(), reminderRepository)
+    }
+
+    val folderRepository: FolderRepository by lazy {
+        FolderRepositoryImpl(database.folderDao())
+    }
+
+    val reminderScheduler: ReminderScheduler by lazy {
+        AndroidReminderScheduler(appContext)
+    }
+
+    val reminderRepository: ReminderRepository by lazy {
+        ReminderRepositoryImpl(database.reminderDao(), reminderScheduler)
+    }
+
+    val spellCheckManager: SpellCheckManager by lazy {
+        SpellCheckManager(appContext)
+    }
+
+    val cryptoProvider: CryptoProvider by lazy {
+        CryptoProviderImpl()
+    }
+
+    val biometricAuthenticator: BiometricAuthenticator by lazy {
+        BiometricAuthenticatorImpl(appContext) { MainActivity.currentActivity() }
+    }
+
+    val securityManager: SecurityManager by lazy {
+        SecurityManager(cryptoProvider, appContext.settingsDataStore)
+    }
+}

@@ -1,0 +1,213 @@
+package com.securenotes.app.ui.screens.settings
+
+import androidx.annotation.StringRes
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.securenotes.app.R
+import com.securenotes.app.domain.settings.SettingsRepository
+import com.securenotes.app.security.BiometricAuthenticator
+import com.securenotes.app.security.BiometricAvailability
+import com.securenotes.app.security.SecurityManager
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+data class SettingsUiState(
+    val biometricEnabled: Boolean = false,
+    val biometricAvailability: BiometricAvailability = BiometricAvailability.UNAVAILABLE,
+    val reminderSoundEnabled: Boolean = true,
+    val showChangePinForm: Boolean = false,
+    val currentPin: String = "",
+    val newPin: String = "",
+    val confirmNewPin: String = "",
+    val showBiometricOffConfirm: Boolean = false,
+    val confirmPinToDisable: String = "",
+    @StringRes val error: Int? = null,
+    @StringRes val message: Int? = null,
+    val requestBiometricAuth: Boolean = false,
+    val busy: Boolean = false
+)
+
+class SettingsViewModel(
+    private val securityManager: SecurityManager,
+    private val biometricAuthenticator: BiometricAuthenticator,
+    private val settingsRepository: SettingsRepository
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(
+        SettingsUiState(biometricAvailability = biometricAuthenticator.availability())
+    )
+    val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            val enabled = securityManager.biometricEnabled.first()
+            val soundEnabled = settingsRepository.reminderSoundEnabled.first()
+            _uiState.update {
+                it.copy(
+                    biometricEnabled = enabled,
+                    reminderSoundEnabled = soundEnabled
+                )
+            }
+        }
+    }
+
+    fun onReminderSoundToggle(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setReminderSoundEnabled(enabled)
+            _uiState.update { it.copy(reminderSoundEnabled = enabled) }
+        }
+    }
+
+    fun toggleChangePinForm() {
+        _uiState.update {
+            it.copy(
+                showChangePinForm = !it.showChangePinForm,
+                currentPin = "",
+                newPin = "",
+                confirmNewPin = "",
+                error = null,
+                message = null
+            )
+        }
+    }
+
+    fun onCurrentPinChange(value: String) {
+        _uiState.update { it.copy(currentPin = value, error = null) }
+    }
+
+    fun onNewPinChange(value: String) {
+        _uiState.update { it.copy(newPin = value, error = null) }
+    }
+
+    fun onConfirmNewPinChange(value: String) {
+        _uiState.update { it.copy(confirmNewPin = value, error = null) }
+    }
+
+    fun savePinChange() {
+        val state = _uiState.value
+        if (state.busy) return
+        if (state.currentPin.isEmpty() || state.newPin.isEmpty() || state.confirmNewPin.isEmpty()) {
+            return
+        }
+        if (state.newPin.length < SecurityManager.MIN_PIN_LENGTH) {
+            _uiState.update { it.copy(error = R.string.pin_invalido_tamanho) }
+            return
+        }
+        if (state.newPin != state.confirmNewPin) {
+            _uiState.update { it.copy(error = R.string.pins_nao_coincidem) }
+            return
+        }
+        _uiState.update { it.copy(busy = true, error = null, message = null) }
+        viewModelScope.launch {
+            val changed = securityManager.changePin(state.currentPin, state.newPin)
+            _uiState.update {
+                it.copy(
+                    busy = false,
+                    currentPin = "",
+                    newPin = "",
+                    confirmNewPin = "",
+                    showChangePinForm = false,
+                    error = if (changed) null else R.string.pin_incorreto,
+                    message = if (changed) R.string.pin_alterado_sucesso else null
+                )
+            }
+        }
+    }
+
+    /** Configurar biometria usando a API oficial do Android. */
+    fun onConfigureBiometric() {
+        val state = _uiState.value
+        if (state.busy) return
+        when (state.biometricAvailability) {
+            BiometricAvailability.AVAILABLE -> {
+                if (!state.biometricEnabled) {
+                    _uiState.update { it.copy(requestBiometricAuth = true, message = null) }
+                }
+            }
+            BiometricAvailability.NO_ENROLLMENT -> {
+                _uiState.update { it.copy(message = R.string.sem_biometria_cadastrada) }
+            }
+            BiometricAvailability.UNAVAILABLE -> {
+                _uiState.update { it.copy(message = R.string.biometria_indisponivel) }
+            }
+        }
+    }
+
+    /** Chamado quando o usuário toca no switch de biometria. */
+    fun onBiometricToggleRequested(enabled: Boolean) {
+        if (_uiState.value.busy) return
+        if (enabled) {
+            onConfigureBiometric()
+        } else {
+            _uiState.update {
+                it.copy(
+                    showBiometricOffConfirm = true,
+                    confirmPinToDisable = "",
+                    error = null,
+                    message = null
+                )
+            }
+        }
+    }
+
+    fun onBiometricAuthResult(success: Boolean) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(requestBiometricAuth = false) }
+            if (success) {
+                securityManager.setBiometricEnabled(true)
+                _uiState.update {
+                    it.copy(biometricEnabled = true, message = R.string.biometria_ativada)
+                }
+            }
+        }
+    }
+
+    fun onConfirmPinToDisableChange(value: String) {
+        _uiState.update { it.copy(confirmPinToDisable = value, error = null) }
+    }
+
+    fun confirmDisableBiometric() {
+        val pin = _uiState.value.confirmPinToDisable
+        if (pin.isEmpty()) return
+        viewModelScope.launch {
+            val valid = securityManager.verifyPin(pin)
+            if (valid) {
+                securityManager.setBiometricEnabled(false)
+                _uiState.update {
+                    it.copy(
+                        biometricEnabled = false,
+                        showBiometricOffConfirm = false,
+                        confirmPinToDisable = "",
+                        message = R.string.biometria_desativada
+                    )
+                }
+            } else {
+                _uiState.update {
+                    it.copy(confirmPinToDisable = "", error = R.string.pin_incorreto)
+                }
+            }
+        }
+    }
+
+    fun dismissMessage() {
+        _uiState.update { it.copy(message = null) }
+    }
+
+    fun dismissError() {
+        _uiState.update { it.copy(error = null) }
+    }
+
+    fun cancelDisableBiometric() {
+        _uiState.update {
+            it.copy(
+                showBiometricOffConfirm = false,
+                confirmPinToDisable = "",
+                error = null
+            )
+        }
+    }
+}

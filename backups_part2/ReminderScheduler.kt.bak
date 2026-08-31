@@ -1,0 +1,12 @@
+package com.securenotes.app.reminder
+
+import com.securenotes.app.domain.model.Reminder
+
+interface ReminderScheduler {
+
+    fun schedule(reminderId: Long, atMillis: Long)
+
+    fun cancel(reminderId: Long)
+
+    fun postNotification(reminder: Reminder)
+}

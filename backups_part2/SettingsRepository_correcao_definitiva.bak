@@ -1,0 +1,20 @@
+package com.securenotes.app.domain.settings
+
+import kotlinx.coroutines.flow.Flow
+
+enum class ThemeMode {
+    SYSTEM,
+    LIGHT,
+    DARK
+}
+
+interface SettingsRepository {
+    val themeMode: Flow<ThemeMode>
+    suspend fun setThemeMode(mode: ThemeMode)
+
+    val biometricEnabled: Flow<Boolean>
+    suspend fun setBiometricEnabled(enabled: Boolean)
+
+    val reminderSoundEnabled: Flow<Boolean>
+    suspend fun setReminderSoundEnabled(enabled: Boolean)
+}
