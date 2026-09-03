@@ -147,13 +147,23 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private var pendingLockJob: kotlinx.coroutines.Job? = null
+
     init {
         lifecycle.addObserver(
             object : androidx.lifecycle.DefaultLifecycleObserver {
                 override fun onStop(owner: LifecycleOwner) {
-                    // Bloqueia e remove conteúdo sensível da visão geral de aplicativos.
-                    securityManager.lock()
-                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    pendingLockJob?.cancel()
+                    pendingLockJob = lifecycleScope.launch {
+                        kotlinx.coroutines.delay(10000L)
+                        securityManager.lock()
+                        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                }
+
+                override fun onStart(owner: LifecycleOwner) {
+                    pendingLockJob?.cancel()
+                    pendingLockJob = null
                 }
             }
         )

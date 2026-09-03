@@ -2,6 +2,7 @@ package com.securenotes.app.di
 
 import android.content.Context
 import com.securenotes.app.MainActivity
+import com.securenotes.app.ai.TokiaAiService
 import com.securenotes.app.data.repository.FolderRepositoryImpl
 import com.securenotes.app.data.repository.NoteRepositoryImpl
 import com.securenotes.app.data.repository.ReminderRepositoryImpl
@@ -61,5 +62,9 @@ class AppContainer(context: Context) {
 
     val securityManager: SecurityManager by lazy {
         SecurityManager(cryptoProvider, appContext.settingsDataStore)
+    }
+
+    val aiService: TokiaAiService by lazy {
+        TokiaAiService()
     }
 }

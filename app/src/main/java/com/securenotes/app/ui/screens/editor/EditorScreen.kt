@@ -102,6 +102,12 @@ fun EditorRoute(
     val contentField by viewModel.contentField.collectAsState()
     val folders by viewModel.folders.collectAsState()
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showAiMenu by remember { mutableStateOf(false) }
+    var showChangeConfirmationDialog by remember { mutableStateOf(false) }
+    var pendingActionAfterConfirm by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var showSavedMessage by remember { mutableStateOf(false) }
+    var showDeleteTextDialog by remember { mutableStateOf(false) }
+    var pendingDeleteValue by remember { mutableStateOf<TextFieldValue?>(null) }
 
     // Salva automaticamente quando o app vai para segundo plano / é fechado
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
@@ -114,6 +120,14 @@ fun EditorRoute(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(showSavedMessage) {
+        if (showSavedMessage) {
+            kotlinx.coroutines.delay(2000)
+            showSavedMessage = false
+            onNavigateBack()
         }
     }
 
@@ -193,11 +207,23 @@ fun EditorRoute(
         }
     }
 
+    val lastContentLength = remember { mutableStateOf(contentField.text.length) }
+
     EditorScreen(
         uiState = uiState,
         contentField = contentField,
         onTitleChange = viewModel::onTitleChange,
-        onContentFieldChange = viewModel::onContentFieldChange,
+        onContentFieldChange = { newValue ->
+            val oldLength = lastContentLength.value
+            val newLength = newValue.text.length
+            if (newLength < oldLength && oldLength > 0 && !uiState.isNew) {
+                pendingDeleteValue = newValue
+                showDeleteTextDialog = true
+            } else {
+                lastContentLength.value = newLength
+                viewModel.onContentFieldChange(newValue)
+            }
+        },
         onColorChange = viewModel::onColorChange,
         onFavoriteToggle = viewModel::onFavoriteToggle,
         onPinToggle = viewModel::onPinToggle,
@@ -208,15 +234,63 @@ fun EditorRoute(
             showReminderPickers(ReminderAction.Edit(reminder.id, reminder.reminderAt))
         },
         onDeleteReminder = viewModel::deleteReminder,
-        onSave = { viewModel.save(onNavigateBack) },
+        onSave = {
+            if (viewModel.hasChanges()) {
+                pendingActionAfterConfirm = {
+                    viewModel.save { showSavedMessage = true }
+                }
+                showChangeConfirmationDialog = true
+            } else {
+                viewModel.save { showSavedMessage = true }
+            }
+        },
         onDelete = { showDeleteDialog = true },
-        onBack = onNavigateBack,
+        onBack = {
+            if (viewModel.hasChanges()) {
+                pendingActionAfterConfirm = {
+                    viewModel.save { showSavedMessage = true }
+                }
+                showChangeConfirmationDialog = true
+            } else {
+                onNavigateBack()
+            }
+        },
         onNextIssue = viewModel::nextIssue,
         onAcceptSuggestion = viewModel::acceptSuggestion,
         onIgnoreWord = viewModel::ignoreWord,
         onAddToDictionary = viewModel::addToDictionary,
-        onDismissCorrection = viewModel::dismissCurrentIssue
+        onDismissCorrection = viewModel::dismissCurrentIssue,
+        onShowAiMenu = { showAiMenu = true },
+        onAiImprove = viewModel::improveText,
+        onAiSummarize = viewModel::summarizeText,
+        onAiCorrect = viewModel::correctText,
+        onAiGenerateTitle = viewModel::generateTitleFromContent,
+        onDismissAiResult = viewModel::dismissAiResult,
+        onApplyAiResult = viewModel::applyAiResult
     )
+
+    if (showSavedMessage) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.3f)),
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.material3.Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.inverseSurface,
+                shadowElevation = 8.dp
+            ) {
+                Text(
+                    text = "Salvo",
+                    modifier = Modifier.padding(horizontal = 32.dp, vertical = 16.dp),
+                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    }
 
     if (showPermissionDenied) {
         AlertDialog(
@@ -271,6 +345,189 @@ fun EditorRoute(
             }
         )
     }
+
+    if (showChangeConfirmationDialog) {
+        AlertDialog(
+            onDismissRequest = { showChangeConfirmationDialog = false },
+            title = { Text("Tem certeza que deseja alterar?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showChangeConfirmationDialog = false
+                        pendingActionAfterConfirm?.invoke()
+                        pendingActionAfterConfirm = null
+                    }
+                ) {
+                    Text("SIM")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showChangeConfirmationDialog = false
+                        viewModel.restoreOriginal()
+                        pendingActionAfterConfirm = null
+                    }
+                ) {
+                    Text("NÃO")
+                }
+            }
+        )
+    }
+
+    if (showDeleteTextDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showDeleteTextDialog = false
+                pendingDeleteValue = null
+            },
+            title = { Text("Tem certeza que quer excluir?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteTextDialog = false
+                        pendingDeleteValue?.let {
+                            lastContentLength.value = it.text.length
+                            viewModel.onContentFieldChange(it)
+                        }
+                        pendingDeleteValue = null
+                    }
+                ) {
+                    Text("SIM")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteTextDialog = false
+                        pendingDeleteValue = null
+                    }
+                ) {
+                    Text("NÃO")
+                }
+            }
+        )
+    }
+
+    if (showAiMenu) {
+        AlertDialog(
+            onDismissRequest = { showAiMenu = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            },
+            title = { Text("Assistente IA") },
+            text = {
+                Column {
+                    Text(
+                        text = "Escolha uma ação:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    TextButton(
+                        onClick = {
+                            showAiMenu = false
+                            viewModel.improveText()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Melhorar texto", modifier = Modifier.fillMaxWidth())
+                    }
+                    TextButton(
+                        onClick = {
+                            showAiMenu = false
+                            viewModel.summarizeText()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Resumir", modifier = Modifier.fillMaxWidth())
+                    }
+                    TextButton(
+                        onClick = {
+                            showAiMenu = false
+                            viewModel.correctText()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Corrigir ortografia", modifier = Modifier.fillMaxWidth())
+                    }
+                    TextButton(
+                        onClick = {
+                            showAiMenu = false
+                            viewModel.generateTitleFromContent()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Gerar título", modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showAiMenu = false }) {
+                    Text(stringResource(R.string.cancelar))
+                }
+            }
+        )
+    }
+
+    if (uiState.aiResult != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissAiResult() },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            },
+            title = { Text("Resultado da IA") },
+            text = {
+                Text(
+                    text = uiState.aiResult ?: "",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.applyAiResult() }) {
+                    Text("Aplicar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissAiResult() }) {
+                    Text(stringResource(R.string.cancelar))
+                }
+            }
+        )
+    }
+
+    if (uiState.aiError != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissAiResult() },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+            },
+            title = { Text("Erro na IA") },
+            text = {
+                Text(
+                    text = uiState.aiError ?: "",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.dismissAiResult() }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
 }
 
 private sealed class ReminderAction {
@@ -300,7 +557,14 @@ fun EditorScreen(
     onAcceptSuggestion: (word: String, suggestion: String) -> Unit,
     onIgnoreWord: (String) -> Unit,
     onAddToDictionary: (String) -> Unit,
-    onDismissCorrection: () -> Unit
+    onDismissCorrection: () -> Unit,
+    onShowAiMenu: () -> Unit = {},
+    onAiImprove: () -> Unit = {},
+    onAiSummarize: () -> Unit = {},
+    onAiCorrect: () -> Unit = {},
+    onAiGenerateTitle: () -> Unit = {},
+    onDismissAiResult: () -> Unit = {},
+    onApplyAiResult: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -631,30 +895,35 @@ fun EditorScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FloatingActionButton(
-                    onClick = { onMicClicked() },
-                    containerColor = if (isListening) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.secondaryContainer
-                    },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .padding(start = 12.dp)
-                        .testTag("mic_button")
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (isListening) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = stringResource(R.string.microfone_finalizar),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    } else {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_mic),
-                            contentDescription = stringResource(R.string.falar_para_escrever),
-                            modifier = Modifier.size(18.dp)
-                        )
+                    FloatingActionButton(
+                        onClick = { onMicClicked() },
+                        containerColor = if (isListening) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .padding(start = 12.dp)
+                            .testTag("mic_button")
+                    ) {
+                        if (isListening) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.microfone_finalizar),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        } else {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_mic),
+                                contentDescription = stringResource(R.string.falar_para_escrever),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
                 FloatingActionButton(
@@ -964,7 +1233,14 @@ private fun EditorScreenPreview() {
             onAcceptSuggestion = { _, _ -> },
             onIgnoreWord = {},
             onAddToDictionary = {},
-            onDismissCorrection = {}
+            onDismissCorrection = {},
+            onShowAiMenu = {},
+            onAiImprove = {},
+            onAiSummarize = {},
+            onAiCorrect = {},
+            onAiGenerateTitle = {},
+            onDismissAiResult = {},
+            onApplyAiResult = {}
         )
     }
 }

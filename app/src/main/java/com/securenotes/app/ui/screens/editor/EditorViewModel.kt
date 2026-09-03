@@ -13,6 +13,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.securenotes.app.NotesApplication
+import com.securenotes.app.ai.AiResult
+import com.securenotes.app.ai.TokiaAiService
 import com.securenotes.app.domain.model.Folder
 import com.securenotes.app.domain.model.Note
 import com.securenotes.app.domain.model.Reminder
@@ -55,7 +57,10 @@ data class EditorUiState(
     val spellCheckReady: Boolean = false,
     val spellingIssues: List<SpellingIssue> = emptyList(),
     val currentIssue: SpellingIssue? = null,
-    val reminders: List<Reminder> = emptyList()
+    val reminders: List<Reminder> = emptyList(),
+    val aiLoading: Boolean = false,
+    val aiResult: String? = null,
+    val aiError: String? = null
 )
 
 class EditorViewModel(
@@ -65,7 +70,8 @@ class EditorViewModel(
     private val scanDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val folderRepository: FolderRepository? = null,
     initialFolderId: Long? = null,
-    private val reminderRepository: ReminderRepository? = null
+    private val reminderRepository: ReminderRepository? = null,
+    private val aiService: TokiaAiService? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -87,6 +93,20 @@ class EditorViewModel(
     private var createdAt: Long = 0L
     private var spellCheckJob: Job? = null
     private var dirty = false
+
+    private var originalTitle: String = ""
+    private var originalContent: String = ""
+
+    fun hasChanges(): Boolean {
+        val state = _uiState.value
+        return state.title != originalTitle || state.content != originalContent
+    }
+
+    fun restoreOriginal() {
+        dirty = false
+        _contentField.value = TextFieldValue(AnnotatedString(originalContent))
+        _uiState.update { it.copy(title = originalTitle, content = originalContent) }
+    }
 
     // Escopo independente para salvar mesmo após onCleared() (saída da tela)
     private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -111,6 +131,8 @@ class EditorViewModel(
                 val note = noteRepository.observeNote(noteId).first()
                 if (note != null) {
                     createdAt = note.createdAt
+                    originalTitle = note.title
+                    originalContent = note.content
                     _contentField.value = TextFieldValue(AnnotatedString(note.content))
                     _uiState.update {
                         it.copy(
@@ -303,6 +325,8 @@ class EditorViewModel(
             )
         }
         dirty = false
+        originalTitle = _uiState.value.title
+        originalContent = _uiState.value.content
     }
 
     fun save(onComplete: () -> Unit) {
@@ -430,6 +454,98 @@ class EditorViewModel(
         return issues.firstOrNull { it.contains(cursor) }
     }
 
+    fun improveText() {
+        val text = _uiState.value.content
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(aiLoading = true, aiError = null, aiResult = null) }
+            val result = aiService?.completeText(text)
+            when (result) {
+                is AiResult.Success -> {
+                    _uiState.update { it.copy(aiLoading = false, aiResult = result.content) }
+                }
+                is AiResult.Error -> {
+                    _uiState.update { it.copy(aiLoading = false, aiError = result.message) }
+                }
+                null -> {
+                    _uiState.update { it.copy(aiLoading = false, aiError = "Serviço de IA não disponível") }
+                }
+            }
+        }
+    }
+
+    fun summarizeText() {
+        val text = _uiState.value.content
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(aiLoading = true, aiError = null, aiResult = null) }
+            val result = aiService?.summarize(text)
+            when (result) {
+                is AiResult.Success -> {
+                    _uiState.update { it.copy(aiLoading = false, aiResult = result.content) }
+                }
+                is AiResult.Error -> {
+                    _uiState.update { it.copy(aiLoading = false, aiError = result.message) }
+                }
+                null -> {
+                    _uiState.update { it.copy(aiLoading = false, aiError = "Serviço de IA não disponível") }
+                }
+            }
+        }
+    }
+
+    fun correctText() {
+        val text = _uiState.value.content
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(aiLoading = true, aiError = null, aiResult = null) }
+            val result = aiService?.correctSpelling(text)
+            when (result) {
+                is AiResult.Success -> {
+                    _uiState.update { it.copy(aiLoading = false, aiResult = result.content) }
+                }
+                is AiResult.Error -> {
+                    _uiState.update { it.copy(aiLoading = false, aiError = result.message) }
+                }
+                null -> {
+                    _uiState.update { it.copy(aiLoading = false, aiError = "Serviço de IA não disponível") }
+                }
+            }
+        }
+    }
+
+    fun generateTitleFromContent() {
+        val text = _uiState.value.content
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(aiLoading = true, aiError = null, aiResult = null) }
+            val result = aiService?.generateTitle(text)
+            when (result) {
+                is AiResult.Success -> {
+                    val newTitle = result.content.trim().removeSurrounding("\"")
+                    onTitleChange(newTitle)
+                    _uiState.update { it.copy(aiLoading = false, aiResult = null) }
+                }
+                is AiResult.Error -> {
+                    _uiState.update { it.copy(aiLoading = false, aiError = result.message) }
+                }
+                null -> {
+                    _uiState.update { it.copy(aiLoading = false, aiError = "Serviço de IA não disponível") }
+                }
+            }
+        }
+    }
+
+    fun applyAiResult() {
+        val result = _uiState.value.aiResult ?: return
+        applyText(result)
+        _uiState.update { it.copy(aiResult = null) }
+    }
+
+    fun dismissAiResult() {
+        _uiState.update { it.copy(aiResult = null, aiError = null) }
+    }
+
     companion object {
         private const val SPELL_DEBOUNCE_MS = 300L
 
@@ -442,7 +558,8 @@ class EditorViewModel(
                     initialFolderId = initialFolderId,
                     spellChecker = application.container.spellCheckManager,
                     folderRepository = application.container.folderRepository,
-                    reminderRepository = application.container.reminderRepository
+                    reminderRepository = application.container.reminderRepository,
+                    aiService = application.container.aiService
                 )
             }
         }
